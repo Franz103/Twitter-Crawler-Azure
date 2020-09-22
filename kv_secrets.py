@@ -14,3 +14,8 @@ def get_bearer_token():
     print(retrieved_secret)
     print("Secret retrieval done.")
     return retrieved_secret
+
+def get_lake_credentials():
+    name = os.environ["STORAGE_ACCOUNT_NAME"]
+    key = os.environ["STORAGE_ACCOUNT_KEY"]
+    return name, key
