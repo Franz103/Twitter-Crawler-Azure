@@ -4,3 +4,4 @@
 *.log
 stream.csv
 __pycache__
+data

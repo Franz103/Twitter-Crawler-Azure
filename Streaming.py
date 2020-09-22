@@ -1,11 +1,9 @@
 import requests
-import os
-import json
-import csv
+import os, time, json, csv
 import kv_secrets, upload_lake
 
 # To set your enviornment variables in your terminal run the following line:
-# export 'BEARER_TOKEN'='<your_bearer_token>'
+# export '<NAME>'='<VALUE>'
 
 
 def create_headers(bearer_token):
@@ -45,14 +43,14 @@ def delete_all_rules(headers, bearer_token, rules):
     print(json.dumps(response.json()))
 
 
-def set_rules(headers, delete, bearer_token):
+def set_rules(headers, bearer_token):
     # You can adjust the rules if needed
     sample_rules = [
         {"value": "azure", "tag": "azure as topic"},
         {"value": "aws", "tag": "aws as topic"},
         {"value": "google cloud", "tag": "google as topic"},
-        {"value": "business intelligence", "tag": "bi"},
-        {"value": "blockchain", "tag": "blockchain"}
+        {"value": "business intelligence", "tag": "BI as topic"},
+        {"value": "blockchain", "tag": "blockchain as topic"}
     ]
     payload = {"add": sample_rules}
     response = requests.post(
@@ -67,7 +65,7 @@ def set_rules(headers, delete, bearer_token):
     print(json.dumps(response.json()))
 
 
-def get_stream(headers, set, bearer_token, f):
+def get_stream(headers, bearer_token):
     with requests.get("https://api.twitter.com/2/tweets/search/stream", headers=headers, stream=True,) as response:
         print(response.status_code)
         if response.status_code != 200:
@@ -85,6 +83,7 @@ def get_stream(headers, set, bearer_token, f):
                     created_dict = {"tweet_id": json_response["data"]["id"], "tweet_text": json_response["data"]["text"],\
                                     "rule_id": rule["id"], "rule_tag": rule["tag"]}
                     try:
+                        f = get_path()
                         with open(f, 'a', encoding="utf-8") as csvfile:
                             csvfile.write('"{}";"{}";"{}";"{}"\n'.format(created_dict["tweet_id"],created_dict["tweet_text"],\
                                                                         created_dict["rule_id"], created_dict["rule_tag"]))
@@ -92,19 +91,25 @@ def get_stream(headers, set, bearer_token, f):
                         print(e)
                         continue
 
-
+def get_path():
+    file_name = time.strftime("%Y-%m-%d.csv")
+    directory = "data"
+    path = "data/" + file_name
+    if os.path.isfile(path) == False:
+        for local_file in os.listdir(directory):
+            print(local_file)
+            upload_lake.upload(directory+"/"+local_file)
+        with open(path, 'w') as csvfile:
+            csvfile.write("tweet_id,tweet_text,rule_id,rule_tag\n")
+    return path
 
 def main():
     bearer_token = kv_secrets.get_bearer_token()
     headers = create_headers(bearer_token)
     rules = get_rules(headers, bearer_token)
-    delete = delete_all_rules(headers, bearer_token, rules)
-    sett = set_rules(headers, delete, bearer_token)
-    f = "stream.csv"
-    if os.path.isfile(f) == False:
-        with open(f, 'w') as csvfile:
-            csvfile.write("tweet_id,tweet_text,rule_id,rule_tag\n")
-    get_stream(headers, sett, bearer_token, f)
+    delete_all_rules(headers, bearer_token, rules)
+    set_rules(headers, bearer_token)
+    get_stream(headers, bearer_token)
 
 
 if __name__ == "__main__":
