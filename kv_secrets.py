@@ -11,7 +11,6 @@ def get_bearer_token():
     client = SecretClient(vault_url=KVUri, credential=credential)
     print("Retrieving your secret from {}.".format(keyVaultName))
     retrieved_secret = client.get_secret(secretName).value
-    print(retrieved_secret)
     print("Secret retrieval done.")
     return retrieved_secret
 

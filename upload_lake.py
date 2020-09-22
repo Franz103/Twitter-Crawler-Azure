@@ -1,6 +1,5 @@
 import os, uuid, sys
 from azure.storage.filedatalake import DataLakeServiceClient
-import collect
 import datetime, time
 from pytz import timezone
 import kv_secrets
