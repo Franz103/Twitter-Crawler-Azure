@@ -1,4 +1,6 @@
 .venv
+.vscode
+.gitignore
 *.log
 stream.csv
 __pycache__
