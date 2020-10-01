@@ -79,17 +79,25 @@ def get_stream(headers, bearer_token):
                 json_response = json.loads(response_line)
                 #print(json_response["matching_rules"].keys())
                 #print(json.dumps(json_response, indent=4, sort_keys=True))
-                for rule in json_response["matching_rules"]:
-                    created_dict = {"tweet_id": json_response["data"]["id"], "tweet_text": json_response["data"]["text"],\
-                                    "rule_id": rule["id"], "rule_tag": rule["tag"]}
-                    try:
-                        f = get_path()
-                        with open(f, 'a', encoding="utf-8") as csvfile:
-                            csvfile.write('"{}";"{}";"{}";"{}"\n'.format(created_dict["tweet_id"],created_dict["tweet_text"],\
-                                                                        created_dict["rule_id"], created_dict["rule_tag"]))
-                    except Exception as e:
-                        print(e)
-                        continue
+                try:
+                    for rule in json_response["matching_rules"]:
+                        created_dict = {"tweet_id": json_response["data"]["id"], "tweet_text": json_response["data"]["text"],\
+                                        "rule_id": rule["id"], "rule_tag": rule["tag"]}
+                        try:
+                            f = get_path()
+                            with open(f, 'a', encoding="utf-8") as csvfile:
+                                csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
+                                                                         created_dict["rule_id"], created_dict["rule_tag"]))
+                        except Exception as e:
+                            print(e)
+                            continue
+                except Exception as e:
+                    print(e)
+                    continue
+
+def preprocess_text(text):
+    replaced = text.replace('\n','\\n')
+    return replaced
 
 def get_path():
     file_name = time.strftime("%Y-%m-%d.csv")
@@ -100,7 +108,7 @@ def get_path():
             print(local_file)
             upload_lake.upload(directory+"/"+local_file)
         with open(path, 'w') as csvfile:
-            csvfile.write("tweet_id,tweet_text,rule_id,rule_tag\n")
+            csvfile.write('tweet_id";"tweet_text";"rule_id";"rule_tag\n')
     return path
 
 def main():
