@@ -1,5 +1,5 @@
 import requests
-import os, time, json, csv
+import os, time, json, csv, re
 import kv_secrets, upload_lake
 
 # To set your enviornment variables in your terminal run the following line:
@@ -46,11 +46,11 @@ def delete_all_rules(headers, bearer_token, rules):
 def set_rules(headers, bearer_token):
     # You can adjust the rules if needed
     sample_rules = [
-        {"value": "azure", "tag": "azure as topic"},
-        {"value": "aws", "tag": "aws as topic"},
-        {"value": "google cloud", "tag": "google as topic"},
-        {"value": "business intelligence", "tag": "BI as topic"},
-        {"value": "blockchain", "tag": "blockchain as topic"}
+        {"value": "azure lang:en", "tag": "azure as topic"},
+        {"value": "(aws OR (amazon web services)) lang:en", "tag": "aws as topic"},
+        {"value": "(google cloud OR gcp) lang:en", "tag": "google as topic"},
+        {"value": "(business intelligence OR \"BI\") lang:en", "tag": "BI as topic"},
+        {"value": "(blockchain OR bitcoin OR ethereum OR cardano) lang:en ", "tag": "blockchain as topic"}
     ]
     payload = {"add": sample_rules}
     response = requests.post(
@@ -66,7 +66,12 @@ def set_rules(headers, bearer_token):
 
 
 def get_stream(headers, bearer_token):
-    with requests.get("https://api.twitter.com/2/tweets/search/stream", headers=headers, stream=True,) as response:
+    base_url = "https://api.twitter.com/2/tweets/search/stream"
+    tweet_fields = ["author_id","created_at", "in_reply_to_user_id", "lang", "public_metrics", "entities", "source"]
+    user_fields = ["created_at", "location", "public_metrics", "verified"]
+    stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&user.fields=" + ",".join(user_fields)
+    #with requests.get("https://api.twitter.com/2/tweets/search/stream", headers=headers, stream=True,) as response:
+    with requests.get(stream_url, headers=headers, stream=True,) as response:
         print(response.status_code)
         if response.status_code != 200:
             raise Exception(
@@ -94,10 +99,24 @@ def get_stream(headers, bearer_token):
                 except Exception as e:
                     print(e)
                     continue
+                
+def remove_emojis(text):
+    emoji_pattern = re.compile("["
+                            u"\U0001F600-\U0001F64F"  # emoticons
+                            u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                            u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                            u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                            u"\U00002702-\U000027B0"
+                            u"\U000024C2-\U0001F251"
+                            "]+", flags=re.UNICODE)
+    return emoji_pattern.sub(r'', text)
 
 def preprocess_text(text):
-    replaced = text.replace('\n','\\n')
-    return replaced
+    replaced_newline = text.replace('\n' , ' ')
+    removed_emojis = remove_emojis(replaced_newline)
+    removed_special_chars = re.sub(r"[^a-zA-Z0-9\.,;- \"\_\@\#]*","",removed_emojis, flags=re.DOTALL)
+    replace_multiple_whitespaces = removed_special_chars.replace(r" +"," ")
+    return replace_multiple_whitespaces
 
 def get_path():
     file_name = time.strftime("%Y-%m-%d.csv")
