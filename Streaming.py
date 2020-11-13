@@ -1,6 +1,8 @@
 import requests
-import os, time, json, csv, re
+import os, time, json, re
+import pandas as pd
 import kv_secrets, upload_lake
+
 
 # To set your enviornment variables in your terminal run the following line:
 # export '<NAME>'='<VALUE>'
@@ -67,10 +69,15 @@ def set_rules(headers, bearer_token):
 
 def get_stream(headers, bearer_token):
     base_url = "https://api.twitter.com/2/tweets/search/stream"
-    tweet_fields = ["author_id","created_at", "in_reply_to_user_id", "lang", "public_metrics", "entities", "source"]
-    user_fields = ["created_at", "location", "public_metrics", "verified"]
-    stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&user.fields=" + ",".join(user_fields)
+    tweet_fields = ["author_id","created_at", "in_reply_to_user_id", "lang", "source", "public_metrics"]
+    expansion = "author_id"
+    user_fields = ["created_at", "location", "verified", "public_metrics"]
+    stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&expansion=" + expansion +"&user.fields=" + ",".join(user_fields)
     #with requests.get("https://api.twitter.com/2/tweets/search/stream", headers=headers, stream=True,) as response:
+    response_fields = ["id", "text", *[f for f in tweet_fields[:-1]]]
+    tweet_metric_fields = ["retweet_count", "reply_count", "like_count", "quote_count"]
+    user_response = ["id", "name", "username", *[f for f in user_fields[:-1]]]
+    user_metric_fields = ["followers_count", "following_count", "tweet_count", "listed_count"]
     with requests.get(stream_url, headers=headers, stream=True,) as response:
         print(response.status_code)
         if response.status_code != 200:
@@ -86,13 +93,21 @@ def get_stream(headers, bearer_token):
                 #print(json.dumps(json_response, indent=4, sort_keys=True))
                 try:
                     for rule in json_response["matching_rules"]:
-                        created_dict = {"tweet_id": json_response["data"]["id"], "tweet_text": json_response["data"]["text"],\
-                                        "rule_id": rule["id"], "rule_tag": rule["tag"]}
+                        created_dict = {"tweet."+field: json_response["data"][field] for field in response_fields}
+                        created_dict["rule_id"] = rule["id"]
+                        created_dict["rule_tag"]= rule["tag"]
+                        tweet_metric_dict = {"tweet."+field : json_response["data"]["public_metrics"][field] for field in tweet_metric_fields}
+                        user_dict = {"user."+field : json_response["includes"]["users"][field] for field in user_response}
+                        user_metric_dict = {"user."+field : json_response["includes"]["users"]["public_metrics"][field] for field in user_metric_fields}
+                        created_dict.update(tweet_metric_dict)
+                        created_dict.update(user_dict)
+                        created_dict.update(user_metric_dict)
                         try:
                             f = get_path()
-                            with open(f, 'a', encoding="utf-8") as csvfile:
-                                csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
-                                                                         created_dict["rule_id"], created_dict["rule_tag"]))
+                            pd.DataFrame.from_dict(created_dict).to_csv(f, sep=";", index=False)
+                            #with open(f, 'w', encoding="utf-8") as csvfile:
+                                # csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
+                                #                                         created_dict["rule_id"], created_dict["rule_tag"]))
                         except Exception as e:
                             print(e)
                             continue
