@@ -86,6 +86,7 @@ def get_stream(headers, bearer_token):
                     response.status_code, response.text
                 )
             )
+        stream_frame = None
         for response_line in response.iter_lines():
             if response_line:
                 json_response = json.loads(response_line)
@@ -104,7 +105,11 @@ def get_stream(headers, bearer_token):
                         created_dict.update(user_metric_dict)
                         try:
                             f = get_path()
-                            pd.DataFrame.from_dict(created_dict).to_csv(f, sep=";", index=False)
+                            if isinstance(stream_frame ,pd.DataFrame):
+                                stream_frame = stream_frame.append(pd.DataFrame.from_dict(created_dict), ignore_index = True)
+                            else:
+                                stream_frame = pd.DataFrame.from_dict(created_dict)
+                            stream_frame.to_csv(f, sep=";")
                             #with open(f, 'w', encoding="utf-8") as csvfile:
                                 # csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
                                 #                                         created_dict["rule_id"], created_dict["rule_tag"]))
