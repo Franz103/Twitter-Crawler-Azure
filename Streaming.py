@@ -2,7 +2,7 @@ import requests
 import os, time, json, re
 import pandas as pd
 import kv_secrets, upload_lake
-
+from pprint import pprint
 
 # To set your enviornment variables in your terminal run the following line:
 # export '<NAME>'='<VALUE>'
@@ -51,7 +51,7 @@ def set_rules(headers, bearer_token):
         {"value": "azure lang:en", "tag": "azure as topic"},
         {"value": "(aws OR (amazon web services)) lang:en", "tag": "aws as topic"},
         {"value": "(google cloud OR gcp) lang:en", "tag": "google as topic"},
-        {"value": "(business intelligence OR \"BI\") lang:en", "tag": "BI as topic"},
+        {"value": "(business intelligence OR \"BI\" ) lang:en", "tag": "BI as topic"},
         {"value": "(blockchain OR bitcoin OR ethereum OR cardano) lang:en ", "tag": "blockchain as topic"}
     ]
     payload = {"add": sample_rules}
@@ -72,7 +72,7 @@ def get_stream(headers, bearer_token):
     tweet_fields = ["author_id","created_at", "in_reply_to_user_id", "lang", "source", "public_metrics"]
     expansion = "author_id"
     user_fields = ["created_at", "location", "verified", "public_metrics"]
-    stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&expansion=" + expansion +"&user.fields=" + ",".join(user_fields)
+    stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&expansions=" + expansion +"&user.fields=" + ",".join(user_fields)
     #with requests.get("https://api.twitter.com/2/tweets/search/stream", headers=headers, stream=True,) as response:
     response_fields = ["id", "text", *[f for f in tweet_fields[:-1]]]
     tweet_metric_fields = ["retweet_count", "reply_count", "like_count", "quote_count"]
@@ -94,22 +94,38 @@ def get_stream(headers, bearer_token):
                 #print(json.dumps(json_response, indent=4, sort_keys=True))
                 try:
                     for rule in json_response["matching_rules"]:
-                        created_dict = {"tweet."+field: json_response["data"][field] for field in response_fields}
-                        created_dict["rule_id"] = rule["id"]
-                        created_dict["rule_tag"]= rule["tag"]
+                        created_dict = dict()
+                        for field in response_fields:
+                            if field in json_response["data"].keys():
+                                created_dict["tweet."+field] = json_response["data"][field]
+                            else:
+                                created_dict["tweet."+field] = "None"
+                        created_dict["rule.id"] = str(rule["id"])
+                        created_dict["rule.tag"]= str(rule["tag"])
                         tweet_metric_dict = {"tweet."+field : json_response["data"]["public_metrics"][field] for field in tweet_metric_fields}
-                        user_dict = {"user."+field : json_response["includes"]["users"][field] for field in user_response}
-                        user_metric_dict = {"user."+field : json_response["includes"]["users"]["public_metrics"][field] for field in user_metric_fields}
+                        user_dict = dict()
+                        for field in user_response:
+                            if field in json_response["includes"]["users"][0].keys():
+                                user_dict["user."+field] = json_response["includes"]["users"][0][field]
+                            else:
+                                user_dict["user."+field] = "None"
+                        user_metric_dict = {"user."+field : json_response["includes"]["users"][0]["public_metrics"][field] for field in user_metric_fields}
                         created_dict.update(tweet_metric_dict)
                         created_dict.update(user_dict)
                         created_dict.update(user_metric_dict)
+                        created_dict["tweet.text"] = preprocess_text(created_dict["tweet.text"])
+                        created_dict["user.name"] = preprocess_text(created_dict["user.name"])
+                        created_dict["user.username"] = preprocess_text(created_dict["user.username"])
+                        created_dict["user.location"] = preprocess_text(created_dict["user.location"])
                         try:
                             f = get_path()
                             if isinstance(stream_frame ,pd.DataFrame):
-                                stream_frame = stream_frame.append(pd.DataFrame.from_dict(created_dict), ignore_index = True)
+                                stream_frame = stream_frame.append(created_dict, ignore_index = True)
                             else:
-                                stream_frame = pd.DataFrame.from_dict(created_dict)
-                            stream_frame.to_csv(f, sep=";")
+                                stream_frame = pd.DataFrame(columns=list(created_dict.keys()))
+                                stream_frame = stream_frame.append(created_dict, ignore_index=True)
+                            stream_frame.set_index("tweet.id")
+                            stream_frame.to_csv(f, sep=";", index=False)
                             #with open(f, 'w', encoding="utf-8") as csvfile:
                                 # csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
                                 #                                         created_dict["rule_id"], created_dict["rule_tag"]))
@@ -134,7 +150,7 @@ def remove_emojis(text):
 def preprocess_text(text):
     replaced_newline = text.replace('\n' , ' ')
     removed_emojis = remove_emojis(replaced_newline)
-    removed_special_chars = re.sub(r"[^a-zA-Z0-9\.,;- \"\_\@\#]*","",removed_emojis, flags=re.DOTALL)
+    removed_special_chars = re.sub(r"[^a-zA-Z0-9\.,; \"\_\@\#]*","",removed_emojis, flags=re.DOTALL)
     replace_multiple_whitespaces = removed_special_chars.replace(r" +"," ")
     return replace_multiple_whitespaces
 
