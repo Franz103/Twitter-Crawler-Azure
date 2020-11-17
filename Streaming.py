@@ -2,7 +2,6 @@ import requests
 import os, time, json, re
 import pandas as pd
 import kv_secrets, upload_lake
-from pprint import pprint
 
 # To set your enviornment variables in your terminal run the following line:
 # export '<NAME>'='<VALUE>'
@@ -48,11 +47,11 @@ def delete_all_rules(headers, bearer_token, rules):
 def set_rules(headers, bearer_token):
     # You can adjust the rules if needed
     sample_rules = [
-        {"value": "azure lang:en", "tag": "azure as topic"},
-        {"value": "(aws OR (amazon web services)) lang:en", "tag": "aws as topic"},
-        {"value": "(google cloud OR gcp) lang:en", "tag": "google as topic"},
-        {"value": "(business intelligence OR \"BI\" ) lang:en", "tag": "BI as topic"},
-        {"value": "(blockchain OR bitcoin OR ethereum OR cardano) lang:en ", "tag": "blockchain as topic"}
+        {"value": "(azure OR #Azure OR @AzDataFactory OR @AzureSupport OR #azurefamily OR #AzureDevOps OR @AzureDevOps) (lang:en OR lang:de)", "tag": "azure as topic"},
+        {"value": "((amazon web services) OR #AWS OR #AmazonWebServices OR @AWS_DACH OR @AWS) (lang:en OR lang:de) ", "tag": "aws as topic"},
+        {"value": "((google cloud) OR @googlecloud OR @GCPcloud OR GoogleCloud_DACH OR #GoogleCloud ) (lang:en OR lang:de)", "tag": "google as topic"},
+        {"value": "(business intelligence OR #PowerBI OR PowerBI OR #BusinessIntelligence) (lang:en OR lang:de)", "tag": "BI as topic"},
+        {"value": "(blockchain OR bitcoin OR ethereum OR cardano OR #Blockchain OR #Bitcoin OR #Ethereum OR #Cardano OR #SmartContract) (lang:en OR lang:de) ", "tag": "blockchain as topic"}
     ]
     payload = {"add": sample_rules}
     response = requests.post(
@@ -69,7 +68,7 @@ def set_rules(headers, bearer_token):
 
 def get_stream(headers, bearer_token):
     base_url = "https://api.twitter.com/2/tweets/search/stream"
-    tweet_fields = ["author_id","created_at", "in_reply_to_user_id", "lang", "source", "public_metrics"]
+    tweet_fields = ["author_id","created_at", "in_reply_to_user_id", "lang", "source","conversation_id","possibly_sensitive", "public_metrics"]
     expansion = "author_id"
     user_fields = ["created_at", "location", "verified", "public_metrics"]
     stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&expansions=" + expansion +"&user.fields=" + ",".join(user_fields)
@@ -87,6 +86,7 @@ def get_stream(headers, bearer_token):
                 )
             )
         stream_frame = None
+        tweet_counter = 0
         for response_line in response.iter_lines():
             if response_line:
                 json_response = json.loads(response_line)
@@ -100,8 +100,8 @@ def get_stream(headers, bearer_token):
                                 created_dict["tweet."+field] = json_response["data"][field]
                             else:
                                 created_dict["tweet."+field] = "None"
-                        created_dict["rule.id"] = str(rule["id"])
-                        created_dict["rule.tag"]= str(rule["tag"])
+                        created_dict["rule.id"] = rule["id"]
+                        created_dict["rule.tag"]= rule["tag"]
                         tweet_metric_dict = {"tweet."+field : json_response["data"]["public_metrics"][field] for field in tweet_metric_fields}
                         user_dict = dict()
                         for field in user_response:
@@ -119,13 +119,14 @@ def get_stream(headers, bearer_token):
                         created_dict["user.location"] = preprocess_text(created_dict["user.location"])
                         try:
                             f = get_path()
-                            if isinstance(stream_frame ,pd.DataFrame):
-                                stream_frame = stream_frame.append(created_dict, ignore_index = True)
-                            else:
+                            if not isinstance(stream_frame ,pd.DataFrame):
                                 stream_frame = pd.DataFrame(columns=list(created_dict.keys()))
-                                stream_frame = stream_frame.append(created_dict, ignore_index=True)
+                            
+                            stream_frame = stream_frame.append(created_dict, ignore_index = True)
+                            tweet_counter += 1
                             stream_frame.set_index("tweet.id")
-                            stream_frame.to_csv(f, sep=";", index=False)
+                            if tweet_counter % 10000 == 0:
+                                stream_frame.to_csv(f, sep=";", index=False)
                             #with open(f, 'w', encoding="utf-8") as csvfile:
                                 # csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
                                 #                                         created_dict["rule_id"], created_dict["rule_tag"]))
@@ -148,10 +149,10 @@ def remove_emojis(text):
     return emoji_pattern.sub(r'', text)
 
 def preprocess_text(text):
-    replaced_newline = text.replace('\n' , ' ')
+    replaced_newline = text.replace("\n"," ").replace("\t"," ")
     removed_emojis = remove_emojis(replaced_newline)
-    removed_special_chars = re.sub(r"[^a-zA-Z0-9\.,; \"\_\@\#]*","",removed_emojis, flags=re.DOTALL)
-    replace_multiple_whitespaces = removed_special_chars.replace(r" +"," ")
+    removed_special_chars = re.sub(r"[^a-zA-Z0-9\.,; \_\@\#]*","",removed_emojis, flags=re.DOTALL)
+    replace_multiple_whitespaces = re.sub(r" +", " ", removed_special_chars)
     return replace_multiple_whitespaces
 
 def get_path():
@@ -164,6 +165,7 @@ def get_path():
             upload_lake.upload(directory+"/"+local_file)
         with open(path, 'w') as csvfile:
             csvfile.write('tweet_id";"tweet_text";"rule_id";"rule_tag\n')
+        csvfile.close()
     return path
 
 def main():
