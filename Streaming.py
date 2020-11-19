@@ -123,10 +123,16 @@ def get_stream(headers, bearer_token):
                                 stream_frame = pd.DataFrame(columns=list(created_dict.keys()))
                             
                             stream_frame = stream_frame.append(created_dict, ignore_index = True)
-                            tweet_counter += 1
                             stream_frame.set_index("tweet.id")
-                            if tweet_counter % 10000 == 0:
-                                stream_frame.to_csv(f, sep=";", index=False)
+                            if tweet_counter % 1000 == 0:
+                                if os.path.isfile(f):
+                                    old_frame = pd.read_csv(f, header=0, delimiter=";")
+                                    frames = [old_frame, stream_frame]
+                                    n_frame = pd.concat(frames)
+                                    n_frame.to_csv(f, sep=",", index=False)
+                                else:
+                                    stream_frame.to_csv(f, sep=";", index=False)
+                            tweet_counter += 1
                             #with open(f, 'w', encoding="utf-8") as csvfile:
                                 # csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
                                 #                                         created_dict["rule_id"], created_dict["rule_tag"]))
@@ -163,9 +169,9 @@ def get_path():
         for local_file in os.listdir(directory):
             print(local_file)
             upload_lake.upload(directory+"/"+local_file)
-        with open(path, 'w') as csvfile:
-            csvfile.write('tweet_id";"tweet_text";"rule_id";"rule_tag\n')
-        csvfile.close()
+        #with open(path, 'w') as csvfile:
+        #    csvfile.write('tweet_id";"tweet_text";"rule_id";"rule_tag\n')
+        #csvfile.close()
     return path
 
 def main():
