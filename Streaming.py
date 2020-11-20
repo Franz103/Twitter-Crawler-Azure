@@ -2,6 +2,7 @@ import requests
 import os, time, json, re
 import pandas as pd
 import kv_secrets, upload_lake
+import pprint
 
 # To set your enviornment variables in your terminal run the following line:
 # export '<NAME>'='<VALUE>'
@@ -68,12 +69,12 @@ def set_rules(headers, bearer_token):
 
 def get_stream(headers, bearer_token):
     base_url = "https://api.twitter.com/2/tweets/search/stream"
-    tweet_fields = ["author_id","created_at", "in_reply_to_user_id", "lang", "source","conversation_id","possibly_sensitive", "public_metrics"]
-    expansion = "author_id"
+    tweet_fields = ["author_id","created_at", "lang", "source","possibly_sensitive","conversation_id","in_reply_to_user_id","referenced_tweets","entities","public_metrics"]
+    expansions = ["author_id","in_reply_to_user_id","referenced_tweets.id","entities.mentions.username"]
     user_fields = ["created_at", "location", "verified", "public_metrics"]
-    stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&expansions=" + expansion +"&user.fields=" + ",".join(user_fields)
+    stream_url = base_url + "?tweet.fields=" + ",".join(tweet_fields) + "&expansions=" + ",".join(expansions) +"&user.fields=" + ",".join(user_fields)
     #with requests.get("https://api.twitter.com/2/tweets/search/stream", headers=headers, stream=True,) as response:
-    response_fields = ["id", "text", *[f for f in tweet_fields[:-1]]]
+    response_fields = ["id", "text", *[f for f in tweet_fields[:-3]]]
     tweet_metric_fields = ["retweet_count", "reply_count", "like_count", "quote_count"]
     user_response = ["id", "name", "username", *[f for f in user_fields[:-1]]]
     user_metric_fields = ["followers_count", "following_count", "tweet_count", "listed_count"]
@@ -85,7 +86,11 @@ def get_stream(headers, bearer_token):
                     response.status_code, response.text
                 )
             )
-        stream_frame = None
+        tweet_frame = None
+        user_frame = None
+        hashtag_frame = pd.DataFrame(columns=["tweet.id","rule.id","tag"])
+        annotation_frame = pd.DataFrame(columns=["tweet.id","rule.id","text","type"])
+        mention_frame = pd.DataFrame(columns=["tweet.id","rule.id","username"])
         tweet_counter = 0
         for response_line in response.iter_lines():
             if response_line:
@@ -94,54 +99,108 @@ def get_stream(headers, bearer_token):
                 #print(json.dumps(json_response, indent=4, sort_keys=True))
                 try:
                     for rule in json_response["matching_rules"]:
-                        created_dict = dict()
-                        for field in response_fields:
-                            if field in json_response["data"].keys():
-                                created_dict["tweet."+field] = json_response["data"][field]
-                            else:
-                                created_dict["tweet."+field] = "None"
-                        created_dict["rule.id"] = rule["id"]
-                        created_dict["rule.tag"]= rule["tag"]
-                        tweet_metric_dict = {"tweet."+field : json_response["data"]["public_metrics"][field] for field in tweet_metric_fields}
-                        user_dict = dict()
-                        for field in user_response:
-                            if field in json_response["includes"]["users"][0].keys():
-                                user_dict["user."+field] = json_response["includes"]["users"][0][field]
-                            else:
-                                user_dict["user."+field] = "None"
-                        user_metric_dict = {"user."+field : json_response["includes"]["users"][0]["public_metrics"][field] for field in user_metric_fields}
-                        created_dict.update(tweet_metric_dict)
-                        created_dict.update(user_dict)
-                        created_dict.update(user_metric_dict)
-                        created_dict["tweet.text"] = preprocess_text(created_dict["tweet.text"])
-                        created_dict["user.name"] = preprocess_text(created_dict["user.name"])
-                        created_dict["user.username"] = preprocess_text(created_dict["user.username"])
-                        created_dict["user.location"] = preprocess_text(created_dict["user.location"])
-                        try:
-                            f = get_path()
-                            if not isinstance(stream_frame ,pd.DataFrame):
-                                stream_frame = pd.DataFrame(columns=list(created_dict.keys()))
-                            
-                            stream_frame = stream_frame.append(created_dict, ignore_index = True)
-                            stream_frame.set_index("tweet.id")
-                            if tweet_counter % 1000 == 0:
-                                if os.path.isfile(f):
-                                    old_frame = pd.read_csv(f, header=0, delimiter=";")
-                                    frames = [old_frame, stream_frame]
-                                    n_frame = pd.concat(frames)
-                                    n_frame.to_csv(f, sep=",", index=False)
+                        tweet_dict, hashtag_frame, annotation_frame, mention_frame = add_tweet_to_data(json_response["data"],rule,  response_fields, tweet_metric_fields, hashtag_frame, annotation_frame, mention_frame)
+                        
+                        if not isinstance(tweet_frame ,pd.DataFrame):
+                                tweet_frame = pd.DataFrame(columns=list(tweet_dict.keys()))
+                        if "tweets" in list(json_response["includes"].keys()):
+                            for tweet_data in json_response["includes"]["tweets"]:
+                                tweet_dict, hashtag_frame, annotation_frame, mention_frame = add_tweet_to_data(tweet_data,rule, response_fields, tweet_metric_fields,hashtag_frame, annotation_frame, mention_frame, mentioned_by=json_response["data"]["id"])
+                                tweet_frame = tweet_frame.append(tweet_dict, ignore_index = True)
+                        if "users" in list(json_response["includes"].keys()):
+                            for user_data in json_response["includes"]["users"]:
+                                if json_response["data"]["author_id"] == user_data["id"]:
+                                    utype = "author"
                                 else:
-                                    stream_frame.to_csv(f, sep=";", index=False)
+                                    utype = "referenced"
+                                user_dict = add_user_to_data(user_data,  json_response["data"]["id"], utype, rule, user_response, user_metric_fields )
+                                if not isinstance(user_frame ,pd.DataFrame):
+                                        user_frame = pd.DataFrame(columns=list(user_dict.keys()))
+                                user_frame = user_frame.append(user_dict, ignore_index = True)
+                        try:
+                            tf,uf, hf, af, mf = get_path()
+                            tweet_frame.set_index("id")
+                            user_frame.set_index("id")
+                            frames = [tweet_frame,user_frame, hashtag_frame, annotation_frame, mention_frame]
+                            if tweet_counter % 10000 == 0:
+                                for idx,path in enumerate([tf, uf, hf, af, mf]):
+                                    local_file = path.split("/")[1]
+                                    old_frame = upload_lake.download(local_file)
+                                    #if os.path.isfile(path):
+                                    if old_frame is not None:
+                                        #old_frame = pd.read_csv(path, header=0, delimiter=";")
+                                        fr = [old_frame, frames[idx]]
+                                        n_frame = pd.concat(fr)
+                                        n_frame.to_csv(path, sep=";", index=False)
+                                        upload_lake.upload(path)
+                                    else:
+                                        fr = frames[idx]
+                                        fr.to_csv(path, sep=";", index=False)
+                                        upload_lake.upload(path)
                             tweet_counter += 1
                             #with open(f, 'w', encoding="utf-8") as csvfile:
                                 # csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
                                 #                                         created_dict["rule_id"], created_dict["rule_tag"]))
                         except Exception as e:
                             print(e)
-                            continue
+                            #continue
                 except Exception as e:
                     print(e)
-                    continue
+                    #continue
+                
+def add_tweet_to_data(data, rule, response_fields, tweet_metric_fields,hashtag_frame, annotation_frame,mention_frame, mentioned_by=None):
+    tweet_dict = dict()
+    for field in response_fields:
+        if field in data.keys():
+            tweet_dict[field] = data[field]
+        else:
+            tweet_dict[field] = "None"
+    tweet_dict["rule.id"] = rule["id"]
+    tweet_dict["rule.tag"]= rule["tag"]
+    tweet_metric_dict = {field : data["public_metrics"][field] for field in tweet_metric_fields}
+    if not mentioned_by and "referenced_tweets" in list(data.keys()):
+        reference_dict = {"referenced_tweets."+ field : data["referenced_tweets"][0][field] for field in ["id","type"]}
+        tweet_dict["refered_to_by"] = "None"
+    else:
+        reference_dict = {"referenced_tweets."+ field : "None" for field in ["id","type"]}
+        tweet_dict["refered_to_by"] = mentioned_by
+    tweet_dict.update(tweet_metric_dict)
+    tweet_dict.update(reference_dict)
+    tweet_dict["text"] = preprocess_text(tweet_dict["text"])
+    
+    if "entities" in list(data.keys()):
+        if "hashtags" in list(data["entities"].keys()):
+            for h in data["entities"]["hashtags"]:
+                h_dict = {"tweet.id":data["id"], "rule.id":rule["id"], "tag":h["tag"]}
+                hashtag_frame= hashtag_frame.append(h_dict,ignore_index=True)
+        if "annotations" in list(data["entities"].keys()):
+            for a in data["entities"]["annotations"]:
+                a_dict = {"tweet.id":data["id"], "rule.id":rule["id"], "text":a["normalized_text"], "type":a["type"]}
+                annotation_frame=annotation_frame.append(a_dict,ignore_index=True)
+        if "mentions" in list(data["entities"].keys()):
+            for m in data["entities"]["mentions"]:
+                m_dict = {"tweet.id":data["id"], "rule.id":rule["id"], "text":m["username"]}
+                mention_frame=mention_frame.append(m_dict, ignore_index=True)
+    
+    return tweet_dict, hashtag_frame, annotation_frame, mention_frame
+
+def add_user_to_data(user_data, tweet_id, type,rule, user_response, user_metric_fields):
+    user_dict = dict()
+    for field in user_response:
+        if field in user_data.keys():
+            user_dict[field] = user_data[field]
+        else:
+            user_dict[field] = "None"
+    user_metric_dict = {field : user_data["public_metrics"][field] for field in user_metric_fields}
+    user_dict["name"] = preprocess_text(user_dict["name"])
+    user_dict["username"] = preprocess_text(user_dict["username"])
+    user_dict["location"] = preprocess_text(user_dict["location"])
+    user_dict["tweet.id"] = tweet_id
+    user_dict["reference_type"] = type
+    user_dict["rule.id"] = rule["id"]
+    user_dict["rule.tag"]= rule["tag"]
+    user_dict.update(user_metric_dict)
+    return user_dict
                 
 def remove_emojis(text):
     emoji_pattern = re.compile("["
@@ -162,17 +221,25 @@ def preprocess_text(text):
     return replace_multiple_whitespaces
 
 def get_path():
-    file_name = time.strftime("%Y-%m-%d.csv")
-    directory = "data"
-    path = "data/" + file_name
-    if os.path.isfile(path) == False:
-        for local_file in os.listdir(directory):
-            print(local_file)
-            upload_lake.upload(directory+"/"+local_file)
+    user_file_name = "user-" + time.strftime("%Y-%m-%d.csv")
+    tweet_file_name = "tweet-" + time.strftime("%Y-%m-%d.csv")
+    hashtag_file_name = "hashtag-" +time.strftime("%Y-%m-%d.csv")
+    annotation_file_name = "annotation-" + time.strftime("%Y-%m-%d.csv")
+    mention_file_name = "mention-" + time.strftime("%Y-%m-%d.csv")
+    directory = "data/"
+    u_path = directory + user_file_name
+    t_path = directory + tweet_file_name
+    h_path =directory + hashtag_file_name
+    a_path =directory + annotation_file_name
+    m_path = directory + mention_file_name
+    #if os.path.isfile(t_path) == False:
+    #for local_file in os.listdir(directory):
+    #    print(local_file)
+    #    upload_lake.upload(directory+"/"+local_file)
         #with open(path, 'w') as csvfile:
         #    csvfile.write('tweet_id";"tweet_text";"rule_id";"rule_tag\n')
         #csvfile.close()
-    return path
+    return t_path, u_path, h_path, a_path, m_path
 
 def main():
     bearer_token = kv_secrets.get_bearer_token()
