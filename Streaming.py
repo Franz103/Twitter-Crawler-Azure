@@ -3,6 +3,7 @@ import os, time, json, re
 import pandas as pd
 import kv_secrets, upload_lake
 import pprint
+import numpy as np
 
 # To set your enviornment variables in your terminal run the following line:
 # export '<NAME>'='<VALUE>'
@@ -88,8 +89,8 @@ def get_stream(headers, bearer_token):
             )
         tweet_frame = None
         user_frame = None
-        tweet_match_frame = pd.DataFrame(columns=["tweet.id","rule.id"])
-        user_match_frame = pd.DataFrame(columns=["user.id","rule.id"])
+        tweet_match_frame = pd.DataFrame(columns=["tweet.id","rule.id", "time"])
+        user_match_frame = pd.DataFrame(columns=["user.id","rule.id", "time"])
         rule_frame = pd.DataFrame(columns=["id","tag"])
         hashtag_frame = pd.DataFrame(columns=["tweet.id","rule.id","tag"])
         annotation_frame = pd.DataFrame(columns=["tweet.id","rule.id","text","type"])
@@ -124,11 +125,13 @@ def get_stream(headers, bearer_token):
                                 tweet_match_frame = tweet_match_frame.append({"tweet.id" : tweet_dict["id"], "rule.id" : rule["id"]},ignore_index = True)
                         if "users" in list(json_response["includes"].keys()):
                             for user_data in json_response["includes"]["users"]:
-                                if json_response["data"]["author_id"] == user_data["id"]:
+                                if len(tweet_frame.loc[tweet_frame["author_id"==user_data["id"], "id"]].values.tolist()) > 0:
+                                    tweet_id = tweet_frame.loc[tweet_frame["author_id"==user_data["id"], "id"]].values.tolist()[0]
                                     utype = "author"
                                 else:
+                                    tweet_id = json_response["data"]["id"]
                                     utype = "referenced"
-                                user_dict = add_user_to_data(user_data,  json_response["data"]["id"], utype, user_response, user_metric_fields )
+                                user_dict = add_user_to_data(user_data,  tweet_id, utype, user_response, user_metric_fields )
                                 
                                 if not isinstance(user_frame ,pd.DataFrame):
                                         user_frame = pd.DataFrame(columns=list(user_dict.keys()))
@@ -149,6 +152,7 @@ def get_stream(headers, bearer_token):
                                         #old_frame = pd.read_csv(path, header=0, delimiter=";")
                                         fr = [old_frame, frames[idx]]
                                         n_frame = pd.concat(fr)
+                                        n_frame = n_frame.drop_duplicates()
                                         n_frame.to_csv(path, sep=";", index=False)
                                         upload_lake.upload(path)
                                     else:
@@ -166,7 +170,7 @@ def get_stream(headers, bearer_token):
                             #continue
                 except Exception as e:
                     print(e)
-                    #continue
+                    #continue    
                 
 def add_tweet_to_data(data, rule, response_fields, tweet_metric_fields,hashtag_frame, annotation_frame,mention_frame, mentioned_by=None):
     tweet_dict = dict()
@@ -178,12 +182,20 @@ def add_tweet_to_data(data, rule, response_fields, tweet_metric_fields,hashtag_f
     #tweet_dict["rule.id"] = rule["id"]
     #tweet_dict["rule.tag"]= rule["tag"]
     tweet_metric_dict = {field : data["public_metrics"][field] for field in tweet_metric_fields}
-    if not mentioned_by and "referenced_tweets" in list(data.keys()):
-        reference_dict = {"referenced_tweets."+ field : data["referenced_tweets"][0][field] for field in ["id","type"]}
-        tweet_dict["refered_to_by"] = "None"
-    else:
+    if not mentioned_by:
+        if "referenced_tweets" in list(data.keys()):
+            reference_dict = {"referenced_tweets."+ field : data["referenced_tweets"][0][field] for field in ["id","type"]}
+            tweet_dict["refered_to_by"] = "None"
+        else:
+            reference_dict = {"referenced_tweets."+ field : "None" for field in ["id","type"]}
+            tweet_dict["refered_to_by"] = "None"
+    elif mentioned_by is not None:
         reference_dict = {"referenced_tweets."+ field : "None" for field in ["id","type"]}
         tweet_dict["refered_to_by"] = mentioned_by
+    else:
+        reference_dict = {"referenced_tweets."+ field : "None" for field in ["id","type"]}
+        tweet_dict["refered_to_by"] = "None"
+
     tweet_dict.update(tweet_metric_dict)
     tweet_dict.update(reference_dict)
     tweet_dict["text"] = preprocess_text(tweet_dict["text"])
