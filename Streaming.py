@@ -89,9 +89,9 @@ def get_stream(headers, bearer_token):
             )
         tweet_frame = None
         user_frame = None
-        tweet_match_frame = pd.DataFrame(columns=["tweet.id","rule.id", "time"])
-        user_match_frame = pd.DataFrame(columns=["user.id","rule.id", "time"])
-        rule_frame = pd.DataFrame(columns=["id","tag"])
+        tweet_match_frame = pd.DataFrame(columns=["tweet.id","rule.id"])
+        user_match_frame = pd.DataFrame(columns=["user.id","rule.id"])
+        #rule_frame = pd.DataFrame(columns=["id","tag"])
         hashtag_frame = pd.DataFrame(columns=["tweet.id","rule.id","tag"])
         annotation_frame = pd.DataFrame(columns=["tweet.id","rule.id","text","type"])
         mention_frame = pd.DataFrame(columns=["tweet.id","rule.id","username"])
@@ -103,8 +103,8 @@ def get_stream(headers, bearer_token):
                 #print(json.dumps(json_response, indent=4, sort_keys=True))
                 try:
                     for rule in json_response["matching_rules"]:
-                        if rule["id"] not in rule_frame["id"].values.tolist():
-                            rule_frame = rule_frame.append({"id" : rule["id"], "tag" : rule["tag"]}, ignore_index=True)
+                        #if rule["id"] not in rule_frame["id"].values.tolist():
+                        #    rule_frame = rule_frame.append({"id" : rule["id"], "tag" : rule["tag"]}, ignore_index=True)
                             
                         tweet_dict, hashtag_frame, annotation_frame, mention_frame = add_tweet_to_data(json_response["data"],rule,  response_fields, tweet_metric_fields, hashtag_frame, annotation_frame, mention_frame)
                         
@@ -125,8 +125,8 @@ def get_stream(headers, bearer_token):
                                 tweet_match_frame = tweet_match_frame.append({"tweet.id" : tweet_dict["id"], "rule.id" : rule["id"]},ignore_index = True)
                         if "users" in list(json_response["includes"].keys()):
                             for user_data in json_response["includes"]["users"]:
-                                if len(tweet_frame.loc[tweet_frame["author_id"==user_data["id"], "id"]].values.tolist()) > 0:
-                                    tweet_id = tweet_frame.loc[tweet_frame["author_id"==user_data["id"], "id"]].values.tolist()[0]
+                                if len(tweet_frame.loc[tweet_frame["author_id"]==user_data["id"], "id"].values.tolist()) > 0:
+                                    tweet_id = tweet_frame.loc[tweet_frame["author_id"]==user_data["id"], "id"].values.tolist()[0]
                                     utype = "author"
                                 else:
                                     tweet_id = json_response["data"]["id"]
@@ -141,9 +141,9 @@ def get_stream(headers, bearer_token):
                                 
                                 user_match_frame = user_match_frame.append({"rule.id" : rule["id"], "user.id": user_dict["id"]},ignore_index = True)
                         try:
-                            tf,uf, hf, af, mf , tma , uma, rf= get_path()
+                            tf,uf, hf, af, mf , tma , uma= get_path()
                             frames = [tweet_frame,user_frame, hashtag_frame, annotation_frame, mention_frame, tweet_match_frame, user_match_frame]
-                            if tweet_counter % 10 == 0:
+                            if tweet_counter % 1000 == 0:
                                 for idx,path in enumerate([tf, uf, hf, af, mf, tma, uma]):
                                     local_file = path.split("/")[1]
                                     old_frame = upload_lake.download(local_file)
@@ -159,8 +159,8 @@ def get_stream(headers, bearer_token):
                                         fr = frames[idx]
                                         fr.to_csv(path, sep=";", index=False)
                                         upload_lake.upload(path)
-                                rule_frame.to_csv(rf, sep=";", index=False)
-                                upload_lake.upload(rf)
+                                #rule_frame.to_csv(rf, sep=";", index=False)
+                                #upload_lake.upload(rf)
                             tweet_counter += 1
                             #with open(f, 'w', encoding="utf-8") as csvfile:
                                 # csvfile.write('{}";"{}";"{}";"{}\n'.format(created_dict["tweet_id"],preprocess_text(created_dict["tweet_text"]),\
@@ -251,14 +251,14 @@ def preprocess_text(text):
     return replace_multiple_whitespaces
 
 def get_path():
-    user_file_name = "user-" + time.strftime("%Y-%m-%d.csv")
-    tweet_file_name = "tweet-" + time.strftime("%Y-%m-%d.csv")
-    hashtag_file_name = "hashtag-" +time.strftime("%Y-%m-%d.csv")
-    annotation_file_name = "annotation-" + time.strftime("%Y-%m-%d.csv")
-    mention_file_name = "mention-" + time.strftime("%Y-%m-%d.csv")
-    tweet_match_file_name = "tweet_match-"+ time.strftime("%Y-%m-%d.csv")
-    user_match_file_name = "user_match-"+ time.strftime("%Y-%m-%d.csv")
-    rule_file_name = "rule-" + time.strftime("%Y-%m-%d.csv")
+    user_file_name = "users-" + time.strftime("%Y-%m-%d.csv")
+    tweet_file_name = "tweets-" + time.strftime("%Y-%m-%d.csv")
+    hashtag_file_name = "hashtags-" +time.strftime("%Y-%m-%d.csv")
+    annotation_file_name = "annotations-" + time.strftime("%Y-%m-%d.csv")
+    mention_file_name = "mentions-" + time.strftime("%Y-%m-%d.csv")
+    tweet_match_file_name = "tweet_matches-"+ time.strftime("%Y-%m-%d.csv")
+    user_match_file_name = "user_matches-"+ time.strftime("%Y-%m-%d.csv")
+    #rule_file_name = "rules-" + time.strftime("%Y-%m-%d.csv")
     directory = "data/"
     u_path = directory + user_file_name
     t_path = directory + tweet_file_name
@@ -267,7 +267,7 @@ def get_path():
     m_path = directory + mention_file_name
     tma_path = directory + tweet_match_file_name
     uma_path = directory + user_match_file_name
-    r_path = directory + rule_file_name
+    #r_path = directory + rule_file_name
     #if os.path.isfile(t_path) == False:
     #for local_file in os.listdir(directory):
     #    print(local_file)
@@ -275,7 +275,7 @@ def get_path():
         #with open(path, 'w') as csvfile:
         #    csvfile.write('tweet_id";"tweet_text";"rule_id";"rule_tag\n')
         #csvfile.close()
-    return t_path, u_path, h_path, a_path, m_path, tma_path, uma_path, r_path
+    return t_path, u_path, h_path, a_path, m_path, tma_path, uma_pat
 
 def main():
     bearer_token = kv_secrets.get_bearer_token()
