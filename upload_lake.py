@@ -28,7 +28,7 @@ def get_current_directory(local_file):
     month = splitted[2]
     year = splitted[1]
     type = splitted[0]
-    directory = "socialmedia/twitter/streaming/new/"+ type + "/" + year + "/" + month + "/" + day
+    directory = "socialmedia/twitter/streaming/"+ type + "/" + year + "/" + month + "/" + day
     return directory
 
 def establish_connection(storage_account_name, storage_account_key):

@@ -4,6 +4,7 @@ import pandas as pd
 import kv_secrets, upload_lake
 import pprint
 import numpy as np
+import stanza
 
 # To set your enviornment variables in your terminal run the following line:
 # export '<NAME>'='<VALUE>'
@@ -90,11 +91,12 @@ def get_stream(headers, bearer_token):
         tweet_frame = None
         user_frame = None
         tweet_match_frame = pd.DataFrame(columns=["tweet.id","rule.id"])
-        user_match_frame = pd.DataFrame(columns=["user.id","rule.id"])
+        #user_match_frame = pd.DataFrame(columns=["user.id","rule.id"])
         #rule_frame = pd.DataFrame(columns=["id","tag"])
-        hashtag_frame = pd.DataFrame(columns=["tweet.id","rule.id","tag"])
-        annotation_frame = pd.DataFrame(columns=["tweet.id","rule.id","text","type"])
-        mention_frame = pd.DataFrame(columns=["tweet.id","rule.id","username"])
+        hashtag_frame = pd.DataFrame(columns=["tweet.id","tag"])
+        annotation_frame = pd.DataFrame(columns=["tweet.id","text","type"])
+        mention_frame = pd.DataFrame(columns=["tweet.id","username"])
+        sentiment_frame = pd.DataFrame(columns=["tweet.id","value", "tag"])
         tweet_counter = 0
         for response_line in response.iter_lines():
             if response_line:
@@ -106,7 +108,7 @@ def get_stream(headers, bearer_token):
                         #if rule["id"] not in rule_frame["id"].values.tolist():
                         #    rule_frame = rule_frame.append({"id" : rule["id"], "tag" : rule["tag"]}, ignore_index=True)
                             
-                        tweet_dict, hashtag_frame, annotation_frame, mention_frame = add_tweet_to_data(json_response["data"],rule,  response_fields, tweet_metric_fields, hashtag_frame, annotation_frame, mention_frame)
+                        tweet_dict, hashtag_frame, annotation_frame, mention_frame, sentiment_frame = add_tweet_to_data(json_response["data"],rule,  response_fields, tweet_metric_fields, hashtag_frame, annotation_frame, mention_frame, sentiment_frame)
                         
                         if not isinstance(tweet_frame ,pd.DataFrame):
                                 tweet_frame = pd.DataFrame(columns=list(tweet_dict.keys()))
@@ -117,7 +119,7 @@ def get_stream(headers, bearer_token):
                         tweet_match_frame = tweet_match_frame.append({"tweet.id" : tweet_dict["id"], "rule.id" : rule["id"]},ignore_index = True)
                         if "tweets" in list(json_response["includes"].keys()):
                             for tweet_data in json_response["includes"]["tweets"]:
-                                tweet_dict, hashtag_frame, annotation_frame, mention_frame = add_tweet_to_data(tweet_data,rule, response_fields, tweet_metric_fields,hashtag_frame, annotation_frame, mention_frame, mentioned_by=json_response["data"]["id"])
+                                tweet_dict, hashtag_frame, annotation_frame, mention_frame, sentiment_frame = add_tweet_to_data(tweet_data,rule, response_fields, tweet_metric_fields,hashtag_frame, annotation_frame, mention_frame, sentiment_frame, mentioned_by=json_response["data"]["id"])
                                 
                                 if tweet_dict["id"] not in tweet_frame["id"].values.tolist():
                                     tweet_frame = tweet_frame.append(tweet_dict, ignore_index = True)
@@ -139,12 +141,12 @@ def get_stream(headers, bearer_token):
                                 if user_dict["id"] not in user_frame["id"].values.tolist():
                                     user_frame = user_frame.append(user_dict, ignore_index = True)
                                 
-                                user_match_frame = user_match_frame.append({"rule.id" : rule["id"], "user.id": user_dict["id"]},ignore_index = True)
+                                #user_match_frame = user_match_frame.append({"rule.id" : rule["id"], "user.id": user_dict["id"]},ignore_index = True)
                         try:
-                            tf,uf, hf, af, mf , tma , uma= get_path()
-                            frames = [tweet_frame,user_frame, hashtag_frame, annotation_frame, mention_frame, tweet_match_frame, user_match_frame]
+                            tf,uf, hf, af, mf ,tma, sf= get_path()
+                            frames = [tweet_frame,user_frame, hashtag_frame, annotation_frame, mention_frame, tweet_match_frame, sentiment_frame]
                             if tweet_counter % 1000 == 0:
-                                for idx,path in enumerate([tf, uf, hf, af, mf, tma, uma]):
+                                for idx,path in enumerate([tf, uf, hf, af, mf, tma, sf]):
                                     local_file = path.split("/")[1]
                                     old_frame = upload_lake.download(local_file)
                                     #if os.path.isfile(path):
@@ -172,7 +174,7 @@ def get_stream(headers, bearer_token):
                     print(e)
                     #continue    
                 
-def add_tweet_to_data(data, rule, response_fields, tweet_metric_fields,hashtag_frame, annotation_frame,mention_frame, mentioned_by=None):
+def add_tweet_to_data(data, rule, response_fields, tweet_metric_fields,hashtag_frame, annotation_frame,mention_frame, sentiment_frame, mentioned_by=None):
     tweet_dict = dict()
     for field in response_fields:
         if field in data.keys():
@@ -200,21 +202,25 @@ def add_tweet_to_data(data, rule, response_fields, tweet_metric_fields,hashtag_f
     tweet_dict.update(reference_dict)
     tweet_dict["text"] = preprocess_text(tweet_dict["text"])
     
+    value, tag = stanza_analysis(tweet_dict["text"], tweet_dict["lang"])
+    s_dict = {"tweet.id": data["id"], "value": value, "tag": tag}
+    sentiment_frame = sentiment_frame.append(s_dict, ignore_index=True)
+    
     if "entities" in list(data.keys()):
         if "hashtags" in list(data["entities"].keys()):
             for h in data["entities"]["hashtags"]:
-                h_dict = {"tweet.id":data["id"], "rule.id":rule["id"], "tag":h["tag"]}
+                h_dict = {"tweet.id":data["id"], "tag":h["tag"]}
                 hashtag_frame= hashtag_frame.append(h_dict,ignore_index=True)
         if "annotations" in list(data["entities"].keys()):
             for a in data["entities"]["annotations"]:
-                a_dict = {"tweet.id":data["id"], "rule.id":rule["id"], "text":a["normalized_text"], "type":a["type"]}
+                a_dict = {"tweet.id":data["id"], "text":a["normalized_text"], "type":a["type"]}
                 annotation_frame=annotation_frame.append(a_dict,ignore_index=True)
         if "mentions" in list(data["entities"].keys()):
             for m in data["entities"]["mentions"]:
-                m_dict = {"tweet.id":data["id"], "rule.id":rule["id"], "username":m["username"]}
+                m_dict = {"tweet.id":data["id"], "username":m["username"]}
                 mention_frame=mention_frame.append(m_dict, ignore_index=True)
     
-    return tweet_dict, hashtag_frame, annotation_frame, mention_frame
+    return tweet_dict, hashtag_frame, annotation_frame, mention_frame, sentiment_frame
 
 def add_user_to_data(user_data, tweet_id, type, user_response, user_metric_fields):
     user_dict = dict()
@@ -250,6 +256,32 @@ def preprocess_text(text):
     replace_multiple_whitespaces = re.sub(r" +", " ", removed_special_chars)
     return replace_multiple_whitespaces
 
+#stanza.download()
+en_nlp = stanza.Pipeline(lang='en', processors='tokenize,sentiment', use_gpu=False)
+de_nlp = stanza.Pipeline(lang='de', processors='tokenize,sentiment', use_gpu=False)
+def stanza_analysis(text, lang):
+    
+    if lang == "en":
+        doc = en_nlp(text)
+    elif lang == "de":
+        doc = de_nlp(text)
+        
+    avg_sent = 0
+    for sentence in doc.sentences:
+        avg_sent += sentence.sentiment
+    sentiment = avg_sent / len(doc.sentences)
+
+    value = sentiment
+
+    if sentiment < 1:
+        tag = "negative"
+    elif sentiment > 1:
+        tag = "positive"
+    else:
+        tag = "neutral"
+    
+    return value, tag
+
 def get_path():
     user_file_name = "users-" + time.strftime("%Y-%m-%d.csv")
     tweet_file_name = "tweets-" + time.strftime("%Y-%m-%d.csv")
@@ -257,7 +289,8 @@ def get_path():
     annotation_file_name = "annotations-" + time.strftime("%Y-%m-%d.csv")
     mention_file_name = "mentions-" + time.strftime("%Y-%m-%d.csv")
     tweet_match_file_name = "tweet_matches-"+ time.strftime("%Y-%m-%d.csv")
-    user_match_file_name = "user_matches-"+ time.strftime("%Y-%m-%d.csv")
+    sentiment_file_name = "sentiments-"+ time.strftime("%Y-%m-%d.csv")
+    #user_match_file_name = "user_matches-"+ time.strftime("%Y-%m-%d-%H.csv")
     #rule_file_name = "rules-" + time.strftime("%Y-%m-%d.csv")
     directory = "data/"
     u_path = directory + user_file_name
@@ -266,7 +299,8 @@ def get_path():
     a_path =directory + annotation_file_name
     m_path = directory + mention_file_name
     tma_path = directory + tweet_match_file_name
-    uma_path = directory + user_match_file_name
+    sf_path = directory + sentiment_file_name
+    #uma_path = directory + user_match_file_name
     #r_path = directory + rule_file_name
     #if os.path.isfile(t_path) == False:
     #for local_file in os.listdir(directory):
@@ -275,7 +309,7 @@ def get_path():
         #with open(path, 'w') as csvfile:
         #    csvfile.write('tweet_id";"tweet_text";"rule_id";"rule_tag\n')
         #csvfile.close()
-    return t_path, u_path, h_path, a_path, m_path, tma_path, uma_pat
+    return t_path, u_path, h_path, a_path, m_path, tma_path, sf_path
 
 def main():
     bearer_token = kv_secrets.get_bearer_token()
