@@ -256,7 +256,7 @@ def preprocess_text(text):
     replace_multiple_whitespaces = re.sub(r" +", " ", removed_special_chars)
     return replace_multiple_whitespaces
 
-#stanza.download()
+stanza.download()
 en_nlp = stanza.Pipeline(lang='en', processors='tokenize,sentiment', use_gpu=False)
 de_nlp = stanza.Pipeline(lang='de', processors='tokenize,sentiment', use_gpu=False)
 def stanza_analysis(text, lang):

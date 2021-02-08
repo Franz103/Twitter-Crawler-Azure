@@ -6,6 +6,7 @@ import kv_secrets
 import ntpath
 import pandas as pd
 from io import BytesIO
+import json
 
 def upload(local_file):
     storage_account_name, storage_account_key = kv_secrets.get_lake_credentials()
@@ -69,6 +70,42 @@ def upload_file_to_directory(service_client,file_system_name, directory, file_na
     except Exception as e:
         print(e)
         
+def upload_json(local_file):
+    storage_account_name, storage_account_key = kv_secrets.get_lake_credentials()
+    service_client = establish_connection(storage_account_name, storage_account_key)
+    file_system_name = "raw"
+    directory = "socialmedia/twitter/streaming/json"
+    #file_system_client = create_file_system(service_client, file_system_name)
+    #The function is always called with the url of the same index
+    try:
+        create_directory(service_client.get_file_system_client(file_system=file_system_name),directory)
+    except Exception as e:
+        print(e)
+    upload_file_to_directory(service_client,file_system_name, directory, local_file, local_file)
+    os.remove(local_file)
+    
+def download_json(local_file):
+    try:
+        storage_account_name, storage_account_key = kv_secrets.get_lake_credentials()
+        service_client = establish_connection(storage_account_name, storage_account_key)
+        file_system_name = "raw"
+        directory = "socialmedia/twitter/streaming/json"
+        file_system_client = service_client.get_file_system_client(file_system=file_system_name)
+        file = directory + "/" + local_file
+        file_client = file_system_client.get_file_client(file)
+        stream = file_client.download_file()
+        if len(stream.readall()) > 0:
+            with open("json/"+local_file,"wb") as f:
+                f.write(stream.readall())
+            f.close()
+            print("downloaded file {}".format(local_file))
+    except Exception as e:
+        empty_dict = dict()
+        with open("json/"+local_file,"w") as f:
+            json.dump(empty_dict,f)
+        f.close()
+        print("created json file")
+
 def download(local_file):
     try:
         storage_account_name, storage_account_key = kv_secrets.get_lake_credentials()
