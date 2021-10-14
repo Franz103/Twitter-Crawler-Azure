@@ -6,6 +6,7 @@ import numpy as np
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import dateutil.parser
+import stanza
 
 # To set your enviornment variables in your terminal run the following line:
 # export '<NAME>'='<VALUE>'
@@ -75,16 +76,12 @@ reference_types = {"replied_to":20000021,
 
 interaction_types = {"author":30000051,
                      "mention":30000052,
-                     "reply":30000053,}
+                     "reply":30000053,
+                     }
 
 occurence_types = {"hashtag":40000071,
                    "annotation":40000072,
-                   "other":40000073,
-                   }
-
-en_stop_words = set(stopwords.words('english'))
-    
-de_stop_words = set(stopwords.words('german'))
+                    }
 
 
 def get_stream(headers, bearer_token):
@@ -101,7 +98,7 @@ def get_stream(headers, bearer_token):
                     response.status_code, response.text
                 )
             )
-        tweet_frame = pd.DataFrame(columns=["id", "text","author_id","created_at", "lang", "source","possibly_sensitive","conversation_id","retweet_count", "reply_count", "like_count", "quote_count"])
+        tweet_frame = pd.DataFrame(columns=["id", "text","author_id","created_at", "lang", "source","possibly_sensitive","conversation_id","retweet_count", "reply_count", "like_count", "quote_count", "sentiment"])
         tweet_frame = tweet_frame.astype({
             "id":"int64",
             "text":"object",
@@ -115,6 +112,7 @@ def get_stream(headers, bearer_token):
             "reply_count":"int64", 
             "like_count":"int64", 
             "quote_count":"int64",
+            "sentiment":"float64"
         })
         
         user_frame = pd.DataFrame(columns=["id", "name", "username","created_at", "location", "verified","followers_count", "following_count", "tweet_count", "listed_count"])
@@ -127,7 +125,7 @@ def get_stream(headers, bearer_token):
             "verified":"bool",
             "followers_count":"int64", 
             "following_count":"int64",
-            "tweet_count":"int64", 
+            "tweet_count":"int64",
             "listed_count":"int64",
         })
         
@@ -184,6 +182,7 @@ def get_stream(headers, bearer_token):
         for response_line in response.iter_lines():
             if response_line:
                 json_response = json.loads(response_line)
+                print(json_response)
                 #print(json_response["matching_rules"].keys())
                 #print(json.dumps(json_response, indent=4, sort_keys=True))
                 #try:
@@ -194,7 +193,7 @@ def get_stream(headers, bearer_token):
                     word_frame, word_occurence_frame, user_frame, user_tweet_interaction_frame, reference_frame, tweet_frame, rule_match_frame = add_tweet_to_data(json_response, response_fields,rule, tweet_metric_fields, user_response_fields, user_metric_fields, word_frame, word_occurence_frame, user_frame, user_tweet_interaction_frame, reference_frame, tweet_frame, rule_match_frame)
                             
                     #try:
-                    if tweet_counter % 1000 == 0:
+                    if tweet_counter % 100 == 0:
                         t_path, u_path, w_path, r_path, ut_path, rm_path, o_path, it_path, ot_path, rt_path, ru_path= get_path()
                         frames = [word_frame, word_occurence_frame, user_frame, user_tweet_interaction_frame, reference_frame, tweet_frame, rule_match_frame, interaction_type_frame, occurence_type_frame, reference_type_frame, rule_frame]
                         for idx,path in enumerate([w_path, o_path, u_path, ut_path, r_path, t_path, rm_path, it_path, ot_path, rt_path, ru_path]):
@@ -257,7 +256,7 @@ def add_tweet_to_data(json_response, response_fields,rule, tweet_metric_fields, 
                 user_id_file= json.load(f)
             f.close()
             
-            if user_dict["id"] not in user_id_file:
+            if user_dict["id"] not in user_id_file and user_dict["id"] not in user_frame["id"].values.tolist():
                 user_frame = user_frame.append(user_dict, ignore_index = True)
                 user_id_file[user_dict["id"]] = 1
                 with open("json/user_id.json", "w") as f:
@@ -273,31 +272,36 @@ def add_tweet_to_data(json_response, response_fields,rule, tweet_metric_fields, 
                     if user_dict["id"] == tweet_data["author_id"]:
                         u_t_dict = {"user.id":user_dict["id"], "tweet.id":tweet_data["id"], "username":user_dict["username"], "interaction_type.id":interaction_types["author"]}
                         u_t_frame = u_t_frame.append(u_t_dict, ignore_index = True)
-                    
-                    word_frame, occurence_frame, u_t_frame, r_frame, t_frame, rule_match_frame = add_tweet_to_frame(tweet_data, json_response,rule, response_fields, tweet_metric_fields, word_frame, occurence_frame, u_t_frame, r_frame, t_frame,rule_match_frame)
+    
+    if "tweets" in list(json_response["includes"].keys()): 
+        for tweet_data in json_response["includes"]["tweets"]:                
+            word_frame, occurence_frame, u_t_frame, r_frame, t_frame, rule_match_frame = add_tweet_to_frame(tweet_data, json_response,rule, response_fields, tweet_metric_fields, word_frame, occurence_frame, u_t_frame, r_frame, t_frame,rule_match_frame)
 
     return word_frame, occurence_frame, user_frame, u_t_frame, r_frame, t_frame, rule_match_frame
 
-def add_tweet_to_frame(data, json_response,rule, response_fields,tweet_metric_fields, word_frame, occurence_frame, u_t_frame, r_frame, t_frame,rule_match_frame):
-    data = json_response["data"]
+def add_tweet_to_frame(data, json_response,rule, response_fields,tweet_metric_fields, word_frame, occurence_frame, u_t_frame, r_frame, t_frame,rule_match_frame):    
     
     with open("json/tweet_id.json", "r") as f:
         tweet_id_file = json.load(f)
     f.close()
     
     if data["id"] in tweet_id_file:
-        if rule["id"] in tweet_id_file[data["id"]]:
+        if rule["tag"] in tweet_id_file[data["id"]]:
             return word_frame, occurence_frame, u_t_frame, r_frame, t_frame, rule_match_frame
         else:
             rm_dict = {"tweet.id":data["id"], "rule.id": rule["id"]}
             rule_match_frame = rule_match_frame.append(rm_dict, ignore_index= True)
-            tweet_id_file[data["id"]].append(rule["id"])
+            tweet_id_file[data["id"]].append(rule["tag"])
             with open("json/tweet_id.json", "w") as f:
                 tweet_id_file = json.dump(tweet_id_file, f)
             f.close()
             return word_frame, occurence_frame, u_t_frame, r_frame, t_frame, rule_match_frame
     else:
-        tweet_id_file[data["id"]] = [rule["id"]]
+        tweet_id_file[data["id"]] = [rule["tag"]]
+        
+        u_t_dict = {"user.id":data["author_id"], "tweet.id":data["id"], "username":None, "interaction_type.id":interaction_types["author"]}
+        u_t_frame = u_t_frame.append(u_t_dict, ignore_index = True)
+        
         with open("json/tweet_id.json", "w") as f:
             json.dump(tweet_id_file, f)
         f.close()
@@ -319,30 +323,18 @@ def add_tweet_to_frame(data, json_response,rule, response_fields,tweet_metric_fi
                 r_frame = r_frame.append(r_dict, ignore_index=True)
                 
         if "in_reply_to_user_id" in list(data.keys()):
-            username = None
-            if "users" in list(json_response["includes"].keys()):
-                for user_data in json_response["includes"]["users"]:
-                    if data["in_reply_to_user_id"] == user_data["id"]:
-                        username = user_data["username"]
-            u_t_dict = {"user.id":data["in_reply_to_user_id"], "tweet.id":data["id"], "username":username, "interaction_type.id":interaction_types["reply"]}
+            u_t_dict = {"user.id":data["in_reply_to_user_id"], "tweet.id":data["id"], "username":None, "interaction_type.id":interaction_types["reply"]}
             u_t_frame = u_t_frame.append(u_t_dict, ignore_index = True)
         
         tweet_dict["text"] = preprocess_text(tweet_dict["text"])
+        tweet_dict["sentiment"] = stanza_analysis(tweet_dict)
         
         ca = dateutil.parser.parse(tweet_dict["created_at"])
         tweet_dict["created_at"] = ca.strftime("%Y-%m-%d")
         
         
-        t_frame = t_frame.append(tweet_dict, ignore_index = True)
-        
-        if tweet_dict["lang"] == "de":
-            word_list = word_tokenize(tweet_dict["text"], "german")
-            word_list = [re.sub(r"[^a-zA-Z]*","",w, flags=re.DOTALL).lower() for w in word_list if w not in de_stop_words]
-            word_set = set(word_list)
-        else:
-            word_list = word_tokenize(tweet_dict["text"])
-            word_list = [re.sub(r"[^a-zA-Z]*","",w, flags=re.DOTALL).lower() for w in word_list if w not in en_stop_words]
-            word_set = set(word_list)
+        if tweet_dict["id"] not in t_frame["id"].values.tolist():
+            t_frame = t_frame.append(tweet_dict, ignore_index = True)
         
         with open("json/word_id_count.json", "r") as f:
             word_id_file = json.load(f)
@@ -354,38 +346,22 @@ def add_tweet_to_frame(data, json_response,rule, response_fields,tweet_metric_fi
                                 "latest":60000093
                             })
         
-        count = word_id_file["latest"]
-        
         with open("json/word_id.json", "r") as f:
             word_list_file = json.load(f)
         f.close()
-        
-        for word in word_set:
-            if word not in word_list_file:
-                count += 1
-                w_dict = {"id":count, "value":word}
-                word_frame = word_frame.append(w_dict, ignore_index = True)
-                word_list_file[word]  = count
-                word_id_file["latest"] = count
-                
-        with open("json/word_id.json", "w") as f:
-            json.dump(word_list_file,f)
-        f.close()
                     
-        h_list = []
-        a_list = []
+        count = word_id_file["latest"]
         if "entities" in list(data.keys()):
             if "hashtags" in list(data["entities"].keys()):
                 for h in data["entities"]["hashtags"]:
-                    if h["tag"] in word_list_file:
-                        o_dict = {"word.id":word_list_file[h["tag"]], "tweet.id":data["id"], "annotation_type":None, "occurence_type.id": occurence_types["hashtag"]}
+                    if h["tag"].lower() in word_list_file or h["tag"].lower() in word_frame["value"].values.tolist():
+                        o_dict = {"word.id":word_list_file[h["tag"].lower()], "tweet.id":data["id"], "annotation_type":None, "occurence_type.id": occurence_types["hashtag"]}
                     else:
                         count += 1
                         o_dict = {"word.id": count, "tweet.id":data["id"], "annotation_type":None, "occurence_type.id": occurence_types["hashtag"]}   
                         w_dict = {"id":count, "value":h["tag"].lower()}
                         word_frame = word_frame.append(w_dict, ignore_index = True)
-                        word_list_file[h["tag"]]  = count
-                    h_list.append(h["tag"].lower())
+                        word_list_file[h["tag"].lower()]  = count
                         
                     occurence_frame = occurence_frame.append(o_dict, ignore_index = True)
                 word_id_file["latest"] = count
@@ -394,7 +370,7 @@ def add_tweet_to_frame(data, json_response,rule, response_fields,tweet_metric_fi
                 f.close()
             if "annotations" in list(data["entities"].keys()):
                 for a in data["entities"]["annotations"]:
-                    if a["normalized_text"].lower() in word_list_file:
+                    if a["normalized_text"].lower() in word_list_file or a["normalized_text"].lower() in word_frame["value"].values.tolist():
                         o_dict = {"word.id":word_list_file[a["normalized_text"].lower()], "tweet.id":data["id"], "annotation_type":a["type"], "occurence_type.id": occurence_types["annotation"]}
                     else:
                         count += 1
@@ -402,7 +378,6 @@ def add_tweet_to_frame(data, json_response,rule, response_fields,tweet_metric_fi
                         w_dict = {"id":count, "value":a["normalized_text"].lower()}
                         word_frame = word_frame.append(w_dict, ignore_index = True)
                         word_list_file[a["normalized_text"].lower()]  = count
-                    a_list.append(a["normalized_text"].lower())
                     occurence_frame = occurence_frame.append(o_dict, ignore_index = True)
                     
                 word_id_file["latest"] = count
@@ -420,17 +395,29 @@ def add_tweet_to_frame(data, json_response,rule, response_fields,tweet_metric_fi
                                 
                     u_t_dict = {"user.id":user_id, "tweet.id":data["id"], "username":m["username"], "interaction_type.id":interaction_types["mention"]}
                     u_t_frame = u_t_frame.append(u_t_dict, ignore_index = True)
-                    
-            for word in word_list:
-                if word not in a_list and word not in h_list:
-                    o_dict = {"word.id":word_list_file[word], "tweet.id":data["id"], "annotation_type":None, "occurence_type.id": occurence_types["other"]}
-                    occurence_frame = occurence_frame.append(o_dict, ignore_index = True)
         
         with open("json/word_id_count.json", "w") as f:
             json.dump(word_id_file, f)
         f.close()
 
         return word_frame, occurence_frame, u_t_frame, r_frame, t_frame, rule_match_frame
+
+
+stanza.download("en")
+stanza.download("de")
+en_nlp = stanza.Pipeline(lang='en', processors='tokenize,sentiment', use_gpu=False)
+de_nlp = stanza.Pipeline(lang='de', processors='tokenize,sentiment', use_gpu=False)
+stanza_models = dict()
+stanza_models["en"] = en_nlp
+stanza_models["de"] = de_nlp
+
+def stanza_analysis(tweet):
+
+    try:
+        val = np.average(list(map(lambda i: i.sentiment, stanza_models[tweet["lang"]](tweet["text"]).sentences)))
+    except:
+        val = np.average(list(map(lambda i: i.sentiment, stanza_models["en"](tweet["text"]).sentences)))
+    return val
                 
 def remove_emojis(text):
     emoji_pattern = re.compile("["
@@ -494,23 +481,19 @@ def get_path():
     return t_path, u_path, w_path, r_path, ut_path, rm_path, o_path, it_path, ot_path, rt_path, ru_path
 
 def main():
-    for i in range(0,10):
-        counter = 0
-        while True:
-            if counter > 100:
-                break
-            try:
-                bearer_token = kv_secrets.get_bearer_token()
-                headers = create_headers(bearer_token)
-                rules = get_rules(headers, bearer_token)
-                delete_all_rules(headers, bearer_token, rules)
-                set_rules(headers, bearer_token)
-                get_stream(headers, bearer_token)
-            except:
-                print("Broke Down, Retrying")
-                counter += 1
-                continue
-            break
+    for i in range(0,3):
+        try:
+            #bearer_token = kv_secrets.get_bearer_token()
+            bearer_token = "AAAAAAAAAAAAAAAAAAAAABEIHQEAAAAA%2FhNssl6h7BDWe87fQPT%2Bg6p1sw0%3DY164805W00Jg2sngBue1diDDZ6qPdKkD3jHViSyc6qorsHaiXi"
+            headers = create_headers(bearer_token)
+            rules = get_rules(headers, bearer_token)
+            delete_all_rules(headers, bearer_token, rules)
+            set_rules(headers, bearer_token)
+            get_stream(headers, bearer_token)
+        except Exception as e:
+            print(e)
+            
+
 
 if __name__ == "__main__":
     main()

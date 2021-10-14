@@ -4,7 +4,7 @@ from azure.keyvault.secrets import SecretClient
 from azure.identity import DefaultAzureCredential
 
 def get_bearer_token():
-    keyVaultName = os.environ["KEY_VAULT_NAME"]
+    keyVaultName = os.environ["previsionzkeyvault"]
     KVUri = "https://{}.vault.azure.net".format(keyVaultName)
     secretName = "BEARER-TOKEN"
     credential = DefaultAzureCredential()
